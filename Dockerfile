@@ -1,6 +1,6 @@
 FROM crowdin/cli:4.12.0
 
-RUN apk --no-cache add curl git git-lfs jq gnupg;
+RUN apk --no-cache add curl git git-lfs jq gnupg bash;
 
 COPY . .
 COPY entrypoint.sh /entrypoint.sh

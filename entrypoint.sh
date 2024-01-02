@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Default values for action outputs
 echo "pull_request_url=" >> $GITHUB_OUTPUT
@@ -10,6 +10,51 @@ if [ "$INPUT_DEBUG_MODE" = true ] || [ -n "$RUNNER_DEBUG" ]; then
   printenv
   echo '---------------------------'
 fi
+
+revive_pre() {
+  sed -i $'s/{\$\([^}]*\)}/{{\\1}}/g' lib/max/language/*/*.lang.php
+}
+
+revive_post() {
+  sed -i $'s/{{\([^}]*\)}}/{$\\1}/g' lib/max/language/*/*.lang.php
+}
+
+revive_fix() {
+  # Fix extended printf
+  sed -i 's/\(%[0-9.]\+\)\\\\\$/\1\\$/g' lib/max/language/*/*.lang.php
+
+  # Remove empty translation strings from .lang.php files
+  sed -i '/^$.*= "";/d' lib/max/language/*/*.lang.php
+  sed -i "/^$.*= '';/d" lib/max/language/*/*.lang.php
+
+  set +e
+
+  # Remove empty translation files
+  for lang in `find lib/max/language -name '*.lang.php' `; do
+    n=`grep -c '^\\$.*=' $lang`
+    if [ $n -eq 0 ]; then
+      rm -f $lang
+    fi
+  done
+
+  # Compile plugin .mo files
+  for po in `find plugins_repo -name '*.po' `; do
+    n=`grep msgstr $po | grep -v 'msgstr ""' | wc -l`
+      if [ $n -eq 0 ]; then
+        rm -f $po
+      else
+        # Delete PO-Revision-Date that sometimes is changed when
+        # content hasn't
+        sed -i '/^"PO-Revision-Date/d' $po
+
+        # Generate .mo
+        mo=`echo "$po" | sed $'s/_lang.po/_lang/g' | sed $'s/po$/mo/g'`
+        msgfmt $po -o $mo
+      fi
+  done
+
+  set -e
+}
 
 upload_sources() {
   if [ -n "$INPUT_UPLOAD_SOURCES_ARGS" ]; then
@@ -42,6 +87,9 @@ upload_translations() {
 }
 
 download_sources() {
+  echo "Not supported"
+  exit 1
+
   if [ -n "$INPUT_DOWNLOAD_SOURCES_ARGS" ]; then
     DOWNLOAD_SOURCES_OPTIONS="${DOWNLOAD_SOURCES_OPTIONS} ${INPUT_DOWNLOAD_SOURCES_ARGS}"
   fi
@@ -370,6 +418,8 @@ if [ -n "$INPUT_COMMAND" ]; then
   exit 0
 fi
 
+revive_pre
+
 if [ "$INPUT_UPLOAD_SOURCES" = true ]; then
   upload_sources "$@"
 fi
@@ -398,6 +448,9 @@ fi
 if [ "$INPUT_DOWNLOAD_TRANSLATIONS" = true ]; then
   download_translations "$@"
 
+  revive_post
+  revive_fix
+
   if [ "$INPUT_PUSH_TRANSLATIONS" = true ]; then
     [ -z "${GITHUB_TOKEN}" ] && {
       echo "CAN NOT FIND 'GITHUB_TOKEN' IN ENVIRONMENT VARIABLES"
@@ -410,6 +463,8 @@ if [ "$INPUT_DOWNLOAD_TRANSLATIONS" = true ]; then
 
     push_to_branch
   fi
+else
+  revive_post
 fi
 
 if [ "$INPUT_DOWNLOAD_BUNDLE" ]; then
