@@ -28,8 +28,8 @@ revive_fix() {
   sed -i "/^$.*= '';/d" lib/max/language/*/*.lang.php
 
   # Run ECS on php files
-  /usr/bin/php83 /usr/bin/composer install --no-interaction --no-ansi --no-progress
-  /usr/bin/php83 lib/vendor/bin/ecs check --fix --no-progress-bar -q --no-ansi --no-interaction -- lib/max/language
+  /usr/bin/php83 /usr/bin/composer install --no-interaction --no-ansi --quiet
+  /usr/bin/php83 lib/vendor/bin/ecs check --fix --no-progress-bar --no-diffs -q --no-ansi --no-interaction -- lib/max/language
 
   set +e
 
