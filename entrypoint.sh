@@ -1,9 +1,19 @@
 #!/bin/bash
 
+# Re-execute as the specified user if running as root and INPUT_USER is set
+if [ -n "$INPUT_USER" ] && [ "$(id -u)" = "0" ]; then
+  TARGET_USER="$INPUT_USER"
+  if [ "$INPUT_USER" = "auto" ]; then
+    TARGET_USER=$(stat -c '%u:%g' "${GITHUB_WORKSPACE}/.git")
+  fi
+  exec su-exec "$TARGET_USER" "$0" "$@"
+fi
+
 # Default values for action outputs
 echo "pull_request_url=" >> $GITHUB_OUTPUT
 echo "pull_request_number=" >> $GITHUB_OUTPUT
 echo "pull_request_created=false" >> $GITHUB_OUTPUT
+echo "command_output=" >> $GITHUB_OUTPUT
 
 if [ "$INPUT_DEBUG_MODE" = true ] || [ -n "$RUNNER_DEBUG" ]; then
   echo '---------------------------'
@@ -130,9 +140,17 @@ download_translations() {
 }
 
 create_pull_request() {
-  BRANCH="${1}"
+  [ -z "${GITHUB_TOKEN}" ] && [ -z "${GH_TOKEN}" ] && {
+    echo "ERROR: Either 'GITHUB_TOKEN' or 'GH_TOKEN' must be set in the environment variables!"
+    exit 1
+  }
 
-  AUTH_HEADER="Authorization: token ${GITHUB_TOKEN}"
+  AUTH_TOKEN="${GITHUB_TOKEN}"
+  if [ -n "${GH_TOKEN}" ]; then
+    AUTH_TOKEN="${GH_TOKEN}"
+  fi
+
+  AUTH_HEADER="Authorization: token ${AUTH_TOKEN}"
   HEADER="Accept: application/vnd.github.v3+json; application/vnd.github.antiope-preview+json; application/vnd.github.shadow-cat-preview+json"
 
   if [ -n "$INPUT_GITHUB_API_BASE_URL" ]; then
@@ -146,13 +164,15 @@ create_pull_request() {
 
   auth_status=$(curl -sL --write-out '%{http_code}' --output /dev/null -H "${AUTH_HEADER}" -H "${HEADER}" "${PULLS_URL}")
   if [[ $auth_status -eq 403 || "$auth_status" -eq 401 ]] ; then
-    echo "FAILED TO AUTHENTICATE USING 'GITHUB_TOKEN' CHECK TOKEN IS VALID"
+    echo "FAILED TO AUTHENTICATE WITH GITHUB. PLEASE CHECK YOUR GITHUB TOKEN"
     echo "pull_request_url=" >> $GITHUB_OUTPUT
     echo "pull_request_number=" >> $GITHUB_OUTPUT
     exit 1
   fi
 
   echo "CHECK IF PULL REQUEST ALREADY EXIST"
+
+  BRANCH="${1}"
 
   if [ -n "$INPUT_PULL_REQUEST_BASE_BRANCH_NAME" ]; then
     BASE_BRANCH="$INPUT_PULL_REQUEST_BASE_BRANCH_NAME"
@@ -283,14 +303,41 @@ create_pull_request() {
   fi
 }
 
-push_to_branch() {
-  BRANCH=${INPUT_LOCALIZATION_BRANCH_NAME}
+save_original_checkout_state() {
+  if git symbolic-ref -q --short HEAD >/dev/null 2>&1; then
+    ORIGINAL_CHECKOUT_VALUE=$(git symbolic-ref -q --short HEAD)
+  else
+    ORIGINAL_CHECKOUT_VALUE=$(git rev-parse --verify HEAD)
+  fi
+}
 
-  REPO_URL="https://${GITHUB_ACTOR}:${GITHUB_TOKEN}@${INPUT_GITHUB_BASE_URL}/${GITHUB_REPOSITORY}.git"
+restore_original_checkout_state() {
+  [ -z "${ORIGINAL_CHECKOUT_VALUE}" ] && return 0
+
+  echo "RESTORING ORIGINAL CHECKOUT: ${ORIGINAL_CHECKOUT_VALUE}"
+  git checkout "${ORIGINAL_CHECKOUT_VALUE}"
+}
+
+push_to_branch() {
+  [ -z "${GITHUB_TOKEN}" ] && [ -z "${GH_TOKEN}" ] && {
+      echo "ERROR: Either 'GITHUB_TOKEN' or 'GH_TOKEN' must be set in the environment variables!"
+      exit 1
+  }
+
+  AUTH_TOKEN="${GITHUB_TOKEN}"
+  if [ -n "${GH_TOKEN}" ]; then
+    AUTH_TOKEN="${GH_TOKEN}"
+  fi
+
+  BRANCH=${INPUT_LOCALIZATION_BRANCH_NAME}
+  REPO_URL="https://${GITHUB_ACTOR}:${AUTH_TOKEN}@${INPUT_GITHUB_BASE_URL}/${GITHUB_REPOSITORY}.git"
+  RESULT=0
 
   echo "CONFIGURING GIT USER"
   git config --global user.email "${INPUT_GITHUB_USER_EMAIL}"
   git config --global user.name "${INPUT_GITHUB_USER_NAME}"
+
+  save_original_checkout_state
 
   if [ "$INPUT_SKIP_REF_CHECKOUT" != true ]; then
     CHECKOUT=${GITHUB_HEAD_REF:-${GITHUB_REF}}
@@ -299,26 +346,34 @@ push_to_branch() {
     git checkout "${CHECKOUT}"
   fi
 
-  if [ -n "$(git show-ref refs/heads/${BRANCH})" ]; then
-    git checkout "${BRANCH}"
-  else
-    git checkout -b "${BRANCH}"
-  fi
+  # Checkout localization branch, using remote state if available
+  git fetch origin "${BRANCH}" 2>/dev/null || true
+  git checkout -B "${BRANCH}" "origin/${BRANCH}" 2>/dev/null || git checkout -B "${BRANCH}"
 
   git add .
 
   if [ ! -n "$(git status -s)" ]; then
     echo "NOTHING TO COMMIT"
-    return
+  else
+    echo "PUSH TO BRANCH ${BRANCH}"
+    set +e
+    git commit --no-verify -m "${INPUT_COMMIT_MESSAGE}"
+    RESULT=$?
+    if [ "${RESULT}" -eq 0 ]; then
+      git push --no-verify --force "${REPO_URL}"
+      RESULT=$?
+    fi
+    if [ "${RESULT}" -eq 0 ] && [ "$INPUT_CREATE_PULL_REQUEST" = true ]; then
+      create_pull_request "${BRANCH}"
+      RESULT=$?
+    fi
+    set -e
   fi
 
-  echo "PUSH TO BRANCH ${BRANCH}"
-  git commit --no-verify -m "${INPUT_COMMIT_MESSAGE}"
-  git push --no-verify --force "${REPO_URL}"
-
-  if [ "$INPUT_CREATE_PULL_REQUEST" = true ]; then
-    create_pull_request "${BRANCH}"
+  if ! restore_original_checkout_state && [ "${RESULT}" -eq 0 ]; then
+    RESULT=1
   fi
+  return "${RESULT}"
 }
 
 view_debug_output() {
@@ -334,7 +389,12 @@ setup_commit_signing() {
 
   gpg --import --batch private.key
 
-  GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format=long | grep -o "rsa\d\+\/\(\w\+\)" | head -n1 | sed "s/rsa\d\+\/\(\w\+\)/\1/")
+  GPG_KEY_ID=$(gpg --with-colons --list-secret-keys | awk -F: '$1 == "sec" { print $5; exit }')
+  if [ -z "$GPG_KEY_ID" ]; then
+    echo "ERROR: No secret GPG key was found after import"
+    rm private.key
+    exit 1
+  fi
   GPG_KEY_OWNER_NAME=$(gpg --list-secret-keys --keyid-format=long | grep  "uid" | sed "s/.\+] \(.\+\) <\(.\+\)>/\1/")
   GPG_KEY_OWNER_EMAIL=$(gpg --list-secret-keys --keyid-format=long | grep  "uid" | sed "s/.\+] \(.\+\) <\(.\+\)>/\2/")
   echo "Imported key information:"
@@ -416,7 +476,15 @@ fi
 
 if [ -n "$INPUT_COMMAND" ]; then
   echo "RUNNING COMMAND crowdin $INPUT_COMMAND $INPUT_COMMAND_ARGS"
-  crowdin $INPUT_COMMAND $INPUT_COMMAND_ARGS
+
+  # Capture command output while still displaying it
+  CROWDIN_OUTPUT=$(crowdin $INPUT_COMMAND $INPUT_COMMAND_ARGS)
+  echo "$CROWDIN_OUTPUT"
+
+  # Write multiline output to GITHUB_OUTPUT using heredoc delimiter
+  echo "command_output<<CROWDIN_EOF" >> $GITHUB_OUTPUT
+  echo "$CROWDIN_OUTPUT" >> $GITHUB_OUTPUT
+  echo "CROWDIN_EOF" >> $GITHUB_OUTPUT
 
   # in this case, we don't need to continue executing any further default behavior
   exit 0
@@ -436,11 +504,6 @@ if [ "$INPUT_DOWNLOAD_SOURCES" = true ]; then
   download_sources "$@"
 
   if [ "$INPUT_PUSH_SOURCES" = true ]; then
-    [ -z "${GITHUB_TOKEN}" ] && {
-      echo "CAN NOT FIND 'GITHUB_TOKEN' IN ENVIRONMENT VARIABLES"
-      exit 1
-    }
-
     [ -n "${INPUT_GPG_PRIVATE_KEY}" ] && {
       setup_commit_signing
     }
@@ -456,11 +519,6 @@ if [ "$INPUT_DOWNLOAD_TRANSLATIONS" = true ]; then
   revive_fix
 
   if [ "$INPUT_PUSH_TRANSLATIONS" = true ]; then
-    [ -z "${GITHUB_TOKEN}" ] && {
-      echo "CAN NOT FIND 'GITHUB_TOKEN' IN ENVIRONMENT VARIABLES"
-      exit 1
-    }
-
     [ -n "${INPUT_GPG_PRIVATE_KEY}" ] && {
       setup_commit_signing
     }
@@ -477,11 +535,6 @@ if [ "$INPUT_DOWNLOAD_BUNDLE" ]; then
   crowdin bundle download $INPUT_DOWNLOAD_BUNDLE $DOWNLOAD_BUNDLE_ARGS
 
   if [ "$INPUT_PUSH_TRANSLATIONS" = true ]; then
-      [ -z "${GITHUB_TOKEN}" ] && {
-        echo "CAN NOT FIND 'GITHUB_TOKEN' IN ENVIRONMENT VARIABLES"
-        exit 1
-      }
-
       [ -n "${INPUT_GPG_PRIVATE_KEY}" ] && {
         setup_commit_signing
       }

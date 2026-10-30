@@ -134,6 +134,10 @@ inputs:
     description: 'Option to preview the list of managed files'
     default: 'false'
     required: false
+  user:
+    description: 'Run the action as this user (uid:gid format, e.g. "1001:1001"). Use "auto" to detect from workspace ownership. Leave empty to run as root (default).'
+    required: false
+    default: ''
 
   # GitHub (Enterprise) configuration
   github_base_url:
@@ -193,6 +197,8 @@ outputs:
     description: 'The number of the pull request created by the workflow'
   pull_request_created:
     description: 'Whether a new pull request was created (true) or an existing one was found (false)'
+  command_output:
+    description: 'The output of the Crowdin CLI command when using the command input'
 
 runs:
   using: docker

@@ -23,9 +23,11 @@
   - [Dealing with concurrency](#dealing-with-concurrency)
   - [Handling parallel runs](#handling-parallel-runs)
 - [Tips and tricks](#tips-and-tricks)
+  - [Using GitHub App for authentication](#using-github-app-for-authentication)
   - [Checking the translation progress](#checking-the-translation-progress)
   - [Pre-Translation](#pre-translation)
   - [Run test workflows on all commits of a PR](#run-test-workflows-on-all-commits-of-a-pr)
+  - [Acknowledging translators](#acknowledging-translators)
 - [Automatic AI Pre-Translation](AI.md)
 ---
 
@@ -47,10 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Synchronize with Crowdin
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: true
@@ -81,10 +83,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Synchronize with Crowdin
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -113,10 +115,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Crowdin sync
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -130,7 +132,7 @@ jobs:
 
 The Action/CLI will automatically detect the [environment variables](https://crowdin.github.io/crowdin-cli/configuration#environment-variables) and use them for the configuration.
 
-> **Note**
+> [!NOTE]
 > To avoid any conflicts, do not use the `crowdin.yml` file in the repository when using the above configuration approach.
 
 ### Upload sources only
@@ -147,10 +149,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Crowdin push
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -174,10 +176,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Crowdin push
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -194,10 +196,12 @@ Note that the value of the `crowdin_branch_name` is `env.BRANCH_NAME` - this is 
 
 The Crowdin CLI supports a `--cache` parameter for the `upload sources` command that stores source file checksums locally. This allows the CLI to only upload files that have changed, significantly reducing upload time for large projects.
 
-> **Note**
+> [!NOTE]
 > The cache feature is experimental. For any feedback, visit [Crowdin CLI Discussions](https://github.com/crowdin/crowdin-cli/discussions).
 
-To persist the cache between workflow runs, use the `actions/cache` action to save and restore the cache file located at `~/.crowdin/cache.json`:
+The CLI writes the cache to the `.crowdin` directory in the current working directory. To persist the cache between workflow runs, restore and save this directory using `actions/cache/restore` and `actions/cache/save`.
+
+Example workflow:
 
 ```yaml
 name: Crowdin Action
@@ -211,18 +215,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Cache Crowdin source files
-        uses: actions/cache@v4
+      - name: Restore Crowdin cache
+        uses: actions/cache/restore@v6
         with:
-          path: ~/.crowdin/cache.json
-          key: ${{ runner.os }}-crowdin-cache-${{ github.ref_name }}-${{ hashFiles('**/crowdin.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-crowdin-cache-${{ github.ref_name }}-
+          path: .crowdin
+          key: crowdin-${{ github.ref_name }}
+          restore-keys: crowdin-${{ github.ref_name }}-
 
       - name: Crowdin push
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -231,11 +234,16 @@ jobs:
         env:
           CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
           CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+
+      - name: Save Crowdin cache
+        uses: actions/cache/save@v6
+        if: always()
+        with:
+          path: .crowdin
+          key: crowdin-${{ github.ref_name }}-${{ github.run_id }}
 ```
 
-The cache key includes the current branch name and the `crowdin.yml` file hash, so each branch maintains its own cache and the cache will be invalidated when your Crowdin configuration changes. The `restore-keys` ensures that even if the exact key doesn't match (e.g., when `crowdin.yml` changes), a previous cache for the same branch will be restored, which is useful for incremental updates.
-
-Make sure to pass the `--cache` argument to the `upload_sources_args` option to use the cache.
+The restore step first tries an exact match on `crowdin-${{ github.ref_name }}` and falls back to the `restore-keys` prefix to pick up the latest run's cache. The save step always runs (even if the upload fails) and writes a new cache entry keyed with the run ID. Make sure to pass `--cache` in `upload_sources_args` so the CLI uses the cache.
 
 ### Download only translations without pushing to a branch
 
@@ -253,10 +261,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Crowdin pull
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: false
           upload_translations: false
@@ -288,10 +296,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Crowdin pull
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           download_translations: false
           download_bundle: 1
@@ -301,7 +309,7 @@ jobs:
           CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
 ```
 
-> **Note**
+> [!NOTE]
 > If you are using a **String-based** project, you need to use this option to download translations. The default `download_translations` option does not work for this type of projects.
 
 The `download_bundle` option accepts the bundle numeric ID.
@@ -324,10 +332,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Synchronize with Crowdin
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: true
@@ -357,7 +365,7 @@ By default, the Action looks for the `crowdin.yml` file in the repository root. 
 # ...
 
 - name: Crowdin
-  uses: crowdin/github-action@v2
+  uses: crowdin/github-action@v3
   with:
     config: '.github/crowdin.yml'
     #...
@@ -386,10 +394,10 @@ jobs:
         lc: [uk, it, es, fr, de, pt-BR] # Target languages https://developer.crowdin.com/language-codes/
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Matrix
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: false
           upload_translations: false
@@ -429,13 +437,13 @@ jobs:
         branch: ["feat/1", "feat/2", "feat/3"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ matrix.branch }}
           fetch-depth: 0
 
       - name: Synchronize with Crowdin
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: true
@@ -520,7 +528,7 @@ There is a possibility to get the URL, number, and creation status of the Pull R
 ```yaml
 # ...
 - name: Crowdin
-  uses: crowdin/github-action@v2
+  uses: crowdin/github-action@v3
   id: crowdin-download
   with:
     download_translations: true
@@ -548,6 +556,61 @@ There is a possibility to get the URL, number, and creation status of the Pull R
 
 ## Tips and Tricks
 
+### Using GitHub App for authentication
+
+Instead of using a Personal Access Token (PAT), you can authenticate using a [GitHub App](https://docs.github.com/en/apps/creating-github-apps/about-creating-github-apps/about-creating-github-apps). This provides **scoped permissions**, **automatic token rotation**, and better compliance with enterprise security policies.
+
+```yaml
+name: Crowdin Action
+
+on:
+  workflow_dispatch:
+
+jobs:
+  crowdin:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.CROWDIN_APP_ID }}
+          private-key: ${{ secrets.CROWDIN_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Synchronize with Crowdin
+        uses: crowdin/github-action@v3
+        with:
+          upload_sources: true
+          download_translations: true
+          create_pull_request: true
+        env:
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
+          CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
+```
+
+To set this up:
+
+1. [Create a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app) with **Contents** and **Pull requests** permissions (Read and Write)
+2. Install the App on your repository
+3. Store the App ID in a repository variable (`CROWDIN_APP_ID`) and the private key in a secret (`CROWDIN_APP_PRIVATE_KEY`)
+
+For more details, see [GitHub issue #270](https://github.com/crowdin/github-action/issues/270).
+
+> [!NOTE]
+> When using a GitHub App token via `GH_TOKEN`, the Checkout step must use `persist-credentials: false`. Otherwise, the default `GITHUB_TOKEN` cached in `.git/config` by `actions/checkout` takes precedence over `GH_TOKEN`, and the action will not use your App token for creating pull requests.
+
 ### Checking the translation progress
 
 ```yaml
@@ -562,10 +625,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Check translation progress
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           command: 'status translation'
           command_args: '--fail-if-incomplete'
@@ -589,19 +652,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Pre-translate
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
-          command: 'pre-translate'
+          command: 'auto-translate'
           command_args: '--language uk --method tm'
         env:
           CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
           CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
 ```
 
-Visit the [official documentation](https://crowdin.github.io/crowdin-cli/commands/crowdin-pre-translate) to learn more about the available pre-translation options.
+Visit the [official documentation](https://crowdin.github.io/crowdin-cli/commands/crowdin-auto-translate) to learn more about the available pre-translation options.
 
 ### Run test workflows on all commits of a PR
 
@@ -613,7 +676,22 @@ To avoid this, add a custom PAT to the checkout action:
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v4
+  uses: actions/checkout@v7
   with:
     token: ${{ secrets.GHA_CUSTOM_PAT }}
+```
+
+### Acknowledging translators
+
+Use the [Crowdin Contributors](https://github.com/marketplace/actions/action-crowdin-contributors) action to generate a table of your project's top translators and proofreaders in the README. It uses the same Crowdin credentials:
+
+```yaml
+- name: Generate Crowdin Contributors table
+  uses: andrii-bodnar/action-crowdin-contributors@v3
+  with:
+    contributors_per_line: 8
+    max_contributors: 32
+  env:
+    CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
+    CROWDIN_PERSONAL_TOKEN: ${{ secrets.CROWDIN_PERSONAL_TOKEN }}
 ```

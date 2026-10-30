@@ -18,7 +18,7 @@ A GitHub action to manage and synchronize localization resources with your Crowd
 [**`AI Localization`**](/docs/AI.md)
 
 [![test](https://github.com/crowdin/github-action/actions/workflows/test-action.yml/badge.svg)](https://github.com/crowdin/github-action/actions/workflows/test-action.yml)
-[![GitHub Used by](https://img.shields.io/static/v1?label=Used%20by&message=11k&color=brightgreen&logo=github&cacheSeconds=10000)](https://github.com/crowdin/github-action/network/dependents?package_id=UGFja2FnZS0yOTQyNTU3MzA0)
+[![GitHub Used by](https://img.shields.io/static/v1?label=Used%20by&message=13k&color=brightgreen&logo=github&cacheSeconds=10000)](https://github.com/crowdin/github-action/network/dependents?package_id=UGFja2FnZS0yOTQyNTU3MzA0)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/crowdin/github-action?cacheSeconds=5000&logo=github)](https://github.com/crowdin/github-action/releases/latest)
 [![GitHub contributors](https://img.shields.io/github/contributors/crowdin/github-action?cacheSeconds=5000)](https://github.com/crowdin/github-action/graphs/contributors)
 [![GitHub](https://img.shields.io/github/license/crowdin/github-action?cacheSeconds=50000)](https://github.com/crowdin/github-action/blob/master/LICENSE)
@@ -35,6 +35,19 @@ This action allows you to easily integrate and automate the localization of your
 - Download sources from Crowdin.
 - Creates a PR with the translations.
 - Run any [Crowdin CLI](https://crowdin.github.io/crowdin-cli/commands/crowdin) command.
+
+## Crowdin CLI 5
+
+> [!IMPORTANT]
+> The `v3` version of the action runs on [Crowdin CLI 5](https://crowdin.github.io/crowdin-cli/blog/2026/08/26/cli-v5) - a complete rewrite that starts instantly and no longer requires Java. The commands, the `crowdin.yml` configuration file, and the exit codes stay the same, so most workflows carry over unchanged when upgrading from `v2`.
+>
+> If you pass custom arguments via `command`, `command_args`, or any `*_args` input, review the following breaking changes:
+>
+> - The `pre-translate` command is now `auto-translate` (no alias).
+> - `auto-translate`: the `--translate-untranslated-only` option was removed - use `--scope` instead (untranslated is the default).
+> - `--plain` was removed - use the global `--output plain` option instead.
+> - Redundant negatable flags were removed - only the form that changes the default behavior is kept (e.g. `--auto-update` was removed while `--no-auto-update` stays; `--no-auto-approve-imported`, `--no-import-eq-suggestions`, `--no-translate-hidden`, and `--no-auto-tag` were removed). The defaults are unchanged, so simply drop the removed form.
+>
 
 ## Usage
 
@@ -57,10 +70,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: crowdin action
-        uses: crowdin/github-action@v2
+        uses: crowdin/github-action@v3
         with:
           upload_sources: true
           upload_translations: false
@@ -168,11 +181,12 @@ By default, the action will look for the `crowdin.yml` file in the root of the r
 
 ### Global options
 
-| Option                 | Description                                                                                | Example value              |
-|------------------------|--------------------------------------------------------------------------------------------|----------------------------|
-| `crowdin_branch_name`  | Option to upload or download files to the specified version branch in your Crowdin project | `main`                     |
-| `config`               | Option to specify a path to the configuration file (without `/` at the beginning)          | `path/to/your/crowdin.yml` |
-| `dryrun_action`        | Defines whether to run the action in the dry-run mode                                      | `false` (default)          |
+| Option                 | Description                                                                                                                           | Example value              |
+|------------------------|---------------------------------------------------------------------------------------------------------------------------------------|----------------------------|
+| `crowdin_branch_name`  | Option to upload or download files to the specified version branch in your Crowdin project                                            | `main`                     |
+| `config`               | Option to specify a path to the configuration file (without `/` at the beginning)                                                     | `path/to/your/crowdin.yml` |
+| `dryrun_action`        | Defines whether to run the action in the dry-run mode                                                                                 | `false` (default)          |
+| `user`                 | Run the action as specific user, accepts `uid:gid` or `auto` to detect from workspace ownership. Leave empty to run as root (default) | `auto`                     |
 
 ### GitHub (Enterprise) configuration
 
@@ -212,10 +226,14 @@ You can also run any other Crowdin CLI command by specifying the `command` and `
 
 ```yaml
 - name: crowdin action
-  uses: crowdin/github-action@v2
+  uses: crowdin/github-action@v3
   with:
-    command: 'pre-translate'
+    command: 'auto-translate'
     command_args: '-l uk --method tm --branch main'
+
+# Access the command output in subsequent steps (optional)
+- name: Use command output
+  run: echo "${{ steps.crowdin.outputs.command_output }}"
 ```
 
 To see the full list of available commands, visit the [official documentation](https://crowdin.github.io/crowdin-cli/).
@@ -227,12 +245,25 @@ This action has the following outputs:
 - `pull_request_url`: The URL of the pull request created by the workflow
 - `pull_request_number`: The number of the pull request created by the workflow
 - `pull_request_created`: Whether a new pull request was created (`true`) or an existing one was found (`false`)
+- `command_output`: The output of the Crowdin CLI command (only available when using the `command` input)
 
 ## Permissions
 
 In order to push translations and create pull requests, the Crowdin GitHub Action requires the `GITHUB_TOKEN` to have the write permission on the `contents` and `pull-requests`.
 
 In case you want to use an [automatic GitHub authentication token](https://docs.github.com/en/actions/security-guides/automatic-token-authentication), you need to assign the [`write` permission to your job](https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs) and [allow GH Actions to create Pull Requests](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository#preventing-github-actions-from-creating-or-approving-pull-requests).
+
+## Versioning
+
+`crowdin/github-action@v3` is a floating tag that always points to the latest `v3.x.y` release. To lock the action to a fixed version, pin to a release tag or a full commit SHA instead:
+
+```yaml
+uses: crowdin/github-action@v3.3.0
+# or
+uses: crowdin/github-action@9c23991700c0ec5256fd41089b9d9d7d540e424e # v3.3.0
+```
+
+Releases are published as [immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases), so a release tag cannot be moved or deleted after publication.
 
 ## Migration from the native GitHub integration
 
@@ -264,6 +295,10 @@ files:
 Then create the secrets `CROWDIN_PROJECT_ID` and `CROWDIN_PERSONAL_TOKEN` and finally, create the workflow. See [Usage](#usage) for more details.
 
 If comparing the native GitHub integration and the GitHub Action, the GitHub Action provides more flexibility and control over the localization process.
+
+## Acknowledging translators
+
+Use the [Crowdin Contributors](https://github.com/marketplace/actions/action-crowdin-contributors) action to generate a table of your project's top translators and proofreaders in the README. See the [example](/docs/EXAMPLES.md#acknowledging-translators) for details.
 
 ## Contributing
 
